@@ -1,27 +1,51 @@
 # Genome Assembly Post-processing & Annotation Toolkit
 
-This repository contains a set of scripts for:
+This repository provides a streamlined workflow for post-processing, quality control, and functional annotation of genome assemblies.
 
-1.  Assembly purging and reference-guided scaffolding\
-2.  Assembly quality control (BUSCO, Merqury, read mapping)\
-3.  Functional annotation using UniProt + DIAMOND\
-4.  Downloading UniProt fungal reference databases
+It is primarily designed for **fungal genome assemblies**, but can be adapted for other eukaryotic genomes.
 
-The workflow is designed primarily for fungal genome assemblies but can
-be adapted for other eukaryotes.
+---
 
-------------------------------------------------------------------------
+# Dependencies
 
-# Workflow Overview (Recommended Order)
+The following software must be installed and available in your `$PATH`:
 
-The scripts are intended to be used in the following order:
+- minimap2  
+- purge_dups  
+- RagTag  
+- Chromeister  
+- BUSCO  
+- meryl  
+- Merqury  
+- bwa  
+- samtools  
+- DIAMOND  
 
-1)  run_purge_ragtag.sh\
-2)  qc_busco_merqury_flagstat.py\
-3)  download_uniprot-fungi.sh\
-4)  annotate_uniprotlike.py
+---
 
-------------------------------------------------------------------------
+## Overview
+
+The toolkit includes scripts for:
+
+1. **Assembly refinement and scaffolding**
+   - Self-alignment  
+   - Duplication purging  
+   - Haplotype separation  
+   - Reference-guided scaffolding  
+
+2. **Assembly quality control**
+   - BUSCO completeness assessment  
+   - Merqury k-mer–based evaluation  
+   - Illumina read mapping statistics  
+
+3. **Functional annotation**
+   - DIAMOND-based annotation against UniProt  
+   - UniProt-like FASTA header formatting  
+
+4. **Reference database download**
+   - Automated retrieval of UniProt fungal datasets  
+
+---
 
 # 1️⃣ run_purge_ragtag.sh
 
@@ -29,16 +53,16 @@ The scripts are intended to be used in the following order:
 
 Performs:
 
--   Self-alignment
--   Duplication purging (purge_dups)
--   Haplotype separation
--   Reference-guided scaffolding (RagTag)
--   Scaffold renaming
--   Chromeister scoring (before and after scaffolding)
+- Assembly self-alignment  
+- Duplication purging (`purge_dups`)  
+- Haplotype separation  
+- Reference-guided scaffolding (RagTag)  
+- Scaffold renaming  
+- Chromeister scoring (before and after scaffolding)  
 
 ## Usage
 
-``` bash
+```bash
 bash run_purge_ragtag.sh \
     assembly.fasta \
     reference.fasta \
@@ -49,40 +73,42 @@ bash run_purge_ragtag.sh \
 
 ### Arguments
 
-  Argument    Description
-  ----------- -----------------------------------------
-  assembly    Input assembly FASTA (can be gzipped)
-  reference   Reference genome FASTA (can be gzipped)
-  outdir      Output directory
-  prefix      Sample name / prefix
-  threads     Number of threads (default: 32)
+| Argument   | Description |
+|------------|-------------|
+| `assembly` | Input assembly FASTA (can be gzipped) |
+| `reference` | Reference genome FASTA (can be gzipped) |
+| `outdir` | Output directory |
+| `prefix` | Sample name / prefix |
+| `threads` | Number of threads (default: 32) |
 
 ### Main Outputs
 
-    final_<SAMPLE>/
-     ├── <SAMPLE>.purged.final.fasta
-     ├── <SAMPLE>.purged.name_map.tsv
-     ├── <SAMPLE>.hap.final.fasta (if haplotigs exist)
-     └── <SAMPLE>.hap.name_map.tsv
+```
+final_<SAMPLE>/
+├── <SAMPLE>.purged.final.fasta
+├── <SAMPLE>.purged.name_map.tsv
+├── <SAMPLE>.hap.final.fasta        (if haplotigs exist)
+└── <SAMPLE>.hap.name_map.tsv
+```
 
-------------------------------------------------------------------------
+---
 
 # 2️⃣ qc_busco_merqury_flagstat.py
 
 ## Purpose
 
-Runs assembly quality control:
+Performs assembly quality control:
 
--   BUSCO (auto-lineage eukaryota)
--   Merqury (k-mer completeness and QV)
--   Illumina read mapping (bwa mem)
--   samtools flagstat
+- BUSCO (auto-lineage: eukaryota)  
+- Merqury (k-mer completeness and QV)  
+- Illumina read mapping (`bwa mem`)  
+- `samtools flagstat`  
 
-Includes automatic skipping if results already exist.
+Automatically skips completed steps unless `--force` is specified.
 
 ## Usage
 
-``` bash
+```bash
 python qc_busco_merqury_flagstat.py \
     --fasta final_SAMPLE/SAMPLE.purged.final.fasta \
     --fq1 reads_R1.fastq.gz \
@@ -91,59 +117,68 @@ python qc_busco_merqury_flagstat.py \
     --cores 32
 ```
 
-Optional parameters:
+### Optional Parameters
 
-    --outdir   Custom output directory (default: QC_<prefix>)
-    --k        k-mer size for meryl (default: 21)
-    --force    Re-run even if outputs exist
+| Parameter | Description |
+|-----------|-------------|
+| `--outdir` | Custom output directory (default: `QC_<prefix>`) |
+| `--k` | k-mer size for meryl (default: 21) |
+| `--force` | Re-run steps even if outputs already exist |
 
-------------------------------------------------------------------------
+---
 
 # 3️⃣ download_uniprot-fungi.sh
 
 ## Purpose
 
-Downloads UniProtKB FASTA sequences via REST API for fungal taxa.
+Downloads UniProtKB FASTA sequences via the UniProt REST API for fungal taxa.
 
-Default taxonomy: taxonomy_id:4751 (Fungi)
+Default taxonomy:
 
-You may modify the query inside the script if needed.
+```
+taxonomy_id:4751  (Fungi)
+```
+
+The query can be modified directly inside the script if needed.
 
 ## Usage
 
-``` bash
+```bash
 bash download_uniprot-fungi.sh
 ```
 
-Outputs are written to:
+### Output Directory
 
-    refdb/
-     ├── uniprotkb_saccharomycetales.fasta.gz
-     └── uniprotkb_fungi.fasta
+```
+refdb/
+├── uniprotkb_saccharomycetales.fasta.gz
+└── uniprotkb_fungi.fasta
+```
 
-------------------------------------------------------------------------
+---
 
 # 4️⃣ annotate_uniprotlike.py
 
 ## Purpose
 
-Annotates predicted protein FASTA files using DIAMOND hits against
-UniProt.
+Annotates predicted protein FASTA files using DIAMOND hits against UniProt.
 
 Produces:
 
--   UniProt-like FASTA headers
--   Mapping table of query → best hit
+- UniProt-like FASTA headers  
+- Query → best hit mapping table  
 
-## Expected DIAMOND Format
+## Required DIAMOND Output Format
 
 The DIAMOND output must contain:
 
+```
 qseqid pident length qlen qcovhsp evalue bitscore stitle
+```
 
-Example DIAMOND command:
+### Example DIAMOND Command
 
-``` bash
+```bash
 diamond blastp \
     -q predicted_proteins.faa \
     -d uniprot_db.dmnd \
@@ -155,7 +190,7 @@ diamond blastp \
 
 ## Usage
 
-``` bash
+```bash
 python annotate_uniprotlike.py \
     --fasta predicted_proteins.faa \
     --hits hits.tsv \
@@ -165,37 +200,11 @@ python annotate_uniprotlike.py \
     --taxid 4932
 ```
 
-------------------------------------------------------------------------
-
-# Dependencies
-
--   minimap2
--   purge_dups
--   RagTag
--   Chromeister
--   BUSCO
--   meryl
--   Merqury
--   bwa
--   samtools
--   DIAMOND
-
-------------------------------------------------------------------------
-
-# Suggested Repository Structure
-
-    .
-    ├── run_purge_ragtag.sh
-    ├── qc_busco_merqury_flagstat.py
-    ├── annotate_uniprotlike.py
-    ├── download_uniprot-fungi.sh
-    ├── README.md
-    └── LICENSE
-
-------------------------------------------------------------------------
+---
 
 # Maintainer
 
-Verstrepen Lab --- KU Leuven\
-https://verstrepenlab.sites.vib.be/en\
-Contact: michael.abrouk@kuleuven.be
+**Verstrepen Lab — KU Leuven**  
+https://verstrepenlab.sites.vib.be/en  
+
+Contact: michael.abrouk@kuleuven.be  
