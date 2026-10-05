@@ -1,0 +1,40 @@
+# Shared environment for the four scripts in Scripts/.
+# Target: Linux x86_64 (including Linux under WSL2).
+# Create:   conda env create -f INSTALL.yaml
+# Activate: conda activate yeast_assembly
+# This installs software, not reference genomes, reads, BUSCO lineages or UniProt.
+# BUSCO can download its lineage data on first use; DIAMOND needs a user-built DB.
+# Primary tool versions are pinned; transitive builds are resolved by Conda.
+name: yeast_assembly
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.11
+  # Purging and reference-guided scaffolding
+  - minimap2=2.31
+  - purge_dups=1.2.6       # Includes split_fa and get_seqs
+  - ragtag=2.1.0          # Provides ragtag.py
+  - samtools=1.24
+  # Whole-genome plots (package includes compute_score.R)
+  - chromeister=1.5.a
+  - r-base
+  # BUSCO, independent read k-mers and Illumina mapping
+  - busco=6.1.0
+  - merqury=1.4.1         # Includes merqury.sh and its plotting dependencies
+  - meryl=1.4.2
+  - bwa=0.7.19
+  # Optional upstream search for annotate_uniprotlike.py
+  - diamond=2.1.11
+  # Match the validated telomere-screening CLI
+  - tidk=0.2.7
+  # Explicit shell utilities used by the released Bash scripts
+  - bash
+  - coreutils
+  - findutils
+  - gawk
+  - grep
+  - sed
+  - gzip
+  - perl

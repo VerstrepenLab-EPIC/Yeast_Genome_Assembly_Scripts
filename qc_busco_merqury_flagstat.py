@@ -36,6 +36,7 @@ Important:
 """
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -240,6 +241,10 @@ def main() -> None:
     ap.add_argument("--k", type=int, default=21, help="k-mer size for meryl (default: 21)")
     ap.add_argument("--force", action="store_true", help="Force re-run even if outputs exist")
     args = ap.parse_args()
+    if args.cores < 1 or args.k < 1:
+        ap.error("--cores and --k must be positive")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", args.prefix):
+        ap.error("--prefix must start with a letter/digit and contain only letters, digits, _, . or -")
 
     fasta = Path(args.fasta).resolve()
     fq1 = Path(args.fq1).resolve()

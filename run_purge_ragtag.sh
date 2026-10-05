@@ -20,10 +20,33 @@
 
 set -euo pipefail
 
+usage() {
+    cat <<'HELP'
+Usage: run_purge_ragtag.sh ASSEMBLY REFERENCE OUTDIR PREFIX [THREADS]
+Purges duplicate sequence and scaffolds against a user-supplied reference.
+Inputs: FASTA or .gz FASTA. Output directory must be new or empty.
+Requirements: Bash, Python >=3.10, GNU utilities, minimap2, purge_dups
+(split_fa/get_seqs), samtools, RagTag, CHROMEISTER, Rscript and compute_score.R.
+Tools are resolved from PATH; no Conda environment is assumed.
+Environment overrides:
+  PYTHON_BIN               Python interpreter (default: python3)
+  CHROMEISTER_SCORE_SCRIPT  Path to compute_score.R (auto-detected from PATH
+                           or beside the resolved CHROMEISTER executable)
+  PURGE_LOW/PURGE_MID/PURGE_HIGH  Original defaults: 5/35/90
+Threads default to 32. Cutoffs are dataset-specific; evaluate before reuse.
+This generic script does not perform FCS-GX or mitochondrial detection.
+HELP
+}
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then usage; exit 0; fi
+if [[ $# -lt 4 || $# -gt 5 ]]; then usage >&2; exit 2; fi
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+command -v "$PYTHON_BIN" >/dev/null 2>&1 || { echo "ERROR: Python 3 is required" >&2; exit 1; }
+export LC_ALL=C
+
 # -------------------- USER-EDITABLE CUT-OFFS --------------------
-LOW=5
-MID=35
-HIGH=90
+LOW=${PURGE_LOW:-5}
+MID=${PURGE_MID:-35}
+HIGH=${PURGE_HIGH:-90}
 
 # -------------------- Parameters --------------------
 ASM=${1:?Provide assembly FASTA (.fa/.fasta) optionally gzipped}
@@ -34,20 +57,41 @@ THREADS=${5:-32}
 
 # -------------------- Resolve input paths to absolute (before cd) --------------------
 abs_path() {
-  local p="$1"
-  if command -v readlink >/dev/null 2>&1; then
-    readlink -f "$p"
-  else
-    python - <<'PY' "$p"
-import os,sys
-print(os.path.abspath(sys.argv[1]))
-PY
-  fi
+  "$PYTHON_BIN" - "$1" <<'PY_PATH'
+import os, sys
+print(os.path.abspath(os.path.expanduser(sys.argv[1])))
+PY_PATH
 }
 
 ASM="$(abs_path "${ASM}")"
 REF="$(abs_path "${REF}")"
 OUTDIR="$(abs_path "${OUTDIR}")"
+
+[[ "$THREADS" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: THREADS must be positive" >&2; exit 2; }
+[[ "$SAMPLE" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo "ERROR: Invalid sample prefix" >&2; exit 2; }
+"$PYTHON_BIN" - "$LOW" "$MID" "$HIGH" <<'PY_CUTOFF'
+import sys
+try:
+    low, mid, high = map(int, sys.argv[1:])
+    assert 0 <= low < mid < high
+except (ValueError, AssertionError):
+    raise SystemExit('ERROR: require integer cutoffs 0 <= LOW < MID < HIGH')
+PY_CUTOFF
+[[ -s "$ASM" && -s "$REF" ]] || { echo "ERROR: Missing or empty input FASTA" >&2; exit 2; }
+if [[ -d "$OUTDIR" && -n "$(find "$OUTDIR" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+  echo "ERROR: Output directory is not empty: $OUTDIR" >&2; exit 2
+fi
+SCORE_SCRIPT="${CHROMEISTER_SCORE_SCRIPT:-}"
+if [[ -z "$SCORE_SCRIPT" ]]; then SCORE_SCRIPT=$(command -v compute_score.R || true); fi
+if [[ -z "$SCORE_SCRIPT" ]]; then
+  CHROMEISTER_BIN=$(command -v CHROMEISTER || true)
+  if [[ -n "$CHROMEISTER_BIN" ]]; then
+    CHROMEISTER_REAL=$("$PYTHON_BIN" -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$CHROMEISTER_BIN")
+    SCORE_SCRIPT="$(dirname "$CHROMEISTER_REAL")/compute_score.R"
+  fi
+fi
+[[ -f "$SCORE_SCRIPT" ]] || { echo "ERROR: Set CHROMEISTER_SCORE_SCRIPT to compute_score.R" >&2; exit 2; }
+SCORE_SCRIPT=$(abs_path "$SCORE_SCRIPT")
 
 # -------------------- Setup output dir --------------------
 mkdir -p "${OUTDIR}"
@@ -200,8 +244,7 @@ reorder_scaffolds_by_ref_keep_unmatched() {
   fi
 
   samtools faidx "${fasta}"
-  # shellcheck disable=SC2046
-  samtools faidx "${fasta}" $(cat "${final}") > "${out_sorted}"
+  samtools faidx -r "${final}" "${fasta}" > "${out_sorted}"
   samtools faidx "${out_sorted}"
 
   echo ">>> [$(date)] Reordering summary:"
@@ -269,7 +312,7 @@ echo ">>> [$(date)] Split FASTA contains ${nseq} sequences."
 echo ">>> [$(date)] Running minimap2 self-alignment..."
 minimap2 -xasm5 -DP -t "${THREADS}" "${SAMPLE}.split.fasta" "${SAMPLE}.split.fasta" \
   | gzip -c > "${SAMPLE}.split.self.paf.gz"
-paf_n=$(zcat "${SAMPLE}.split.self.paf.gz" | wc -l || true)
+paf_n=$(gzip -dc "${SAMPLE}.split.self.paf.gz" | wc -l || true)
 echo ">>> [$(date)] PAF lines: ${paf_n}"
 
 # ============================================================
@@ -336,7 +379,7 @@ echo ">>> [$(date)] hap.fa contigs:    ${hap_n}"
 # ============================================================
 echo ">>> [$(date)] Running Chromeister & score calculation (pre-scaffold)..."
 CHROMEISTER -query "${REF_USED}" -db "${ASM_USED}" -out "${SAMPLE}.assembly.mat" -dimension 2000
-Rscript ~/anaconda3/envs/chromeister/bin/compute_score.R "${SAMPLE}.assembly.mat" 2000
+Rscript "$SCORE_SCRIPT" "${SAMPLE}.assembly.mat" 2000
 
 # ============================================================
 # 6) RagTag scaffolding
@@ -368,7 +411,7 @@ fi
 
 if [[ "${REF_NSEQ}" -gt 20 ]]; then
   PURGED_ORDERED="purged_${SAMPLE}_ragtag/ragtag.scaffold.len_sorted.fasta"
-  echo ">>> [$(date)] REF has >80 sequences; ordering PURGED scaffolds by size (desc)."
+  echo ">>> [$(date)] REF has >20 sequences; ordering PURGED scaffolds by size (desc)."
   sort_fasta_by_len_desc "${PURGED_FASTA}" "${PURGED_ORDERED}"
   samtools faidx "${PURGED_ORDERED}" >/dev/null 2>&1 || true
 else
@@ -422,11 +465,11 @@ fi
 # ============================================================
 echo ">>> [$(date)] Scoring FINAL scaffolds (Chromeister)..."
 CHROMEISTER -query "${REF_USED}" -db "${PURGED_FINAL}" -out "${SAMPLE}.purged.final.mat" -dimension 2000
-Rscript ~/anaconda3/envs/chromeister/bin/compute_score.R "${SAMPLE}.purged.final.mat" 2000
+Rscript "$SCORE_SCRIPT" "${SAMPLE}.purged.final.mat" 2000
 
 if [[ -f "${FINAL_DIR}/${SAMPLE}.hap.final.fasta" && -s "${FINAL_DIR}/${SAMPLE}.hap.final.fasta" ]]; then
   CHROMEISTER -query "${REF_USED}" -db "${FINAL_DIR}/${SAMPLE}.hap.final.fasta" -out "${SAMPLE}.hap.final.mat" -dimension 2000
-  Rscript ~/anaconda3/envs/chromeister/bin/compute_score.R "${SAMPLE}.hap.final.mat" 2000
+  Rscript "$SCORE_SCRIPT" "${SAMPLE}.hap.final.mat" 2000
 fi
 
 echo
